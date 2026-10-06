@@ -1,7 +1,7 @@
 package pablocos.gestor_biblioteca.kinal.repository;
 
-import com.universidad.biblioteca.entity.EstadoPrestamo;
-import com.universidad.biblioteca.entity.Prestamo;
+import pablocos.gestor_biblioteca.kinal.entity.EstadoPrestamo;
+import pablocos.gestor_biblioteca.kinal.entity.Prestamo;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;

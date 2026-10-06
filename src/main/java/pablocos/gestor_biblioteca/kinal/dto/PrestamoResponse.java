@@ -1,6 +1,6 @@
 package pablocos.gestor_biblioteca.kinal.dto;
 
-import com.universidad.biblioteca.entity.EstadoPrestamo;
+import pablocos.gestor_biblioteca.kinal.entity.EstadoPrestamo;
 
 import java.time.LocalDate;
 

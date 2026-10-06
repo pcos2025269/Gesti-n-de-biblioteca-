@@ -1,6 +1,6 @@
 package pablocos.gestor_biblioteca.kinal.repository;
 
-import com.universidad.biblioteca.entity.Libro;
+import pablocos.gestor_biblioteca.kinal.entity.Libro;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
