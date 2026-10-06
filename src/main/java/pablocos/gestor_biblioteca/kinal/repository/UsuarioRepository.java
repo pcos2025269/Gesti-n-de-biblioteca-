@@ -1,6 +1,6 @@
 package pablocos.gestor_biblioteca.kinal.repository;
 
-import com.universidad.biblioteca.entity.Usuario;
+import pablocos.gestor_biblioteca.kinal.entity.Usuario;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
