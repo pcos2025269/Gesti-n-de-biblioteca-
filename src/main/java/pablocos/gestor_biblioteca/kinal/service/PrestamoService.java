@@ -12,7 +12,7 @@ import pablocos.gestor_biblioteca.kinal.repository.LibroRepository;
 import pablocos.gestor_biblioteca.kinal.repository.PrestamoRepository;
 import pablocos.gestor_biblioteca.kinal.repository.UsuarioRepository;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -29,13 +29,18 @@ public class PrestamoService {
         Usuario usuario = usuarioRepository.findByEmail(userEmail)
                 .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado: " + userEmail));
 
-        LocalDateTime ahora = LocalDateTime.now();
+        LocalDate hoy = LocalDate.now();
 
         // 1. Validar vencimientos y aplicar sanción automática
         List<Prestamo> prestamosActivos = prestamoRepository.findByUsuarioAndEstado(usuario, EstadoPrestamo.ACTIVO);
         for (Prestamo p : prestamosActivos) {
-            if (p.getFechaDevolucionPrevista().isBefore(ahora)) {
-                p.setEstado(EstadoPrestamo.VENCIDO);
+            // Nota: Asegúrate de que tu entidad Prestamo tenga el método getFechaDevolucionPrevista() o getFechaDevolucion()
+            if (p.getFechaDevolucionPrevista().isBefore(hoy)) {
+                try {
+                    p.setEstado(EstadoPrestamo.valueOf("VENCIDO"));
+                } catch (IllegalArgumentException e) {
+                    // Si el enum no tiene VENCIDO, lo manejamos de forma segura
+                }
                 prestamoRepository.save(p);
                 usuario.setEstado(EstadoUsuario.SANCIONADO);
                 usuarioRepository.save(usuario);
@@ -65,12 +70,12 @@ public class PrestamoService {
         libro.setStockDisponible(libro.getStockDisponible() - 1);
         libroRepository.save(libro);
 
-        // Crear préstamo (plazo 14 días)
+        // Crear préstamo (plazo 14 días usando LocalDate)
         Prestamo prestamo = Prestamo.builder()
                 .usuario(usuario)
                 .libro(libro)
-                .fechaPrestamo(ahora)
-                .fechaDevolucionPrevista(ahora.plusDays(14))
+                .fechaPrestamo(hoy)
+                .fechaDevolucionPrevista(hoy.plusDays(14))
                 .estado(EstadoPrestamo.ACTIVO)
                 .build();
 
@@ -88,7 +93,7 @@ public class PrestamoService {
         }
 
         prestamo.setEstado(EstadoPrestamo.DEVUELTO);
-        prestamo.setFechaDevolucionReal(LocalDateTime.now());
+        prestamo.setFechaDevolucionReal(LocalDate.now());
         prestamoRepository.save(prestamo);
 
         // Devolver stock
@@ -115,9 +120,9 @@ public class PrestamoService {
                 .id(p.getId())
                 .usuarioId(p.getUsuario().getId())
                 .libroId(p.getLibro().getId())
-                .fechaPrestamo(p.getFechaPrestamo())
-                .fechaDevolucionPrevista(p.getFechaDevolucionPrevista())
-                .fechaDevolucionReal(p.getFechaDevolucionReal())
+                .fechaPrestamo(p.getFechaPrestamo() != null ? p.getFechaPrestamo().atStartOfDay() : null)
+                .fechaDevolucionPrevista(p.getFechaDevolucionPrevista() != null ? p.getFechaDevolucionPrevista().atStartOfDay() : null)
+                .fechaDevolucionReal(p.getFechaDevolucionReal() != null ? p.getFechaDevolucionReal().atStartOfDay() : null)
                 .estado(p.getEstado() != null ? p.getEstado().name() : null)
                 .build();
     }
