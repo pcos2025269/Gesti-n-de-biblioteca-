@@ -1,6 +1,5 @@
 package pablocos.gestor_biblioteca.kinal.exception;
 
-
 import java.time.Instant;
 
 public record ErrorResponse(

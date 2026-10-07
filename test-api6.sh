@@ -4,7 +4,7 @@
 BASE_URL="http://localhost:8081/api/v1"
 ADMIN_EMAIL="admin@biblioteca.com"
 ADMIN_PASS="Admin123*"
-USER_EMAIL="lector@biblioteca.com"
+USER_EMAIL="lector2@biblioteca.com"
 USER_PASS="Lector123*"
 
 echo "    INICIANDO PRUEBAS FUNCIONALES Y ESTRÉS"

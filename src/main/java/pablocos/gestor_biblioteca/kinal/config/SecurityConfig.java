@@ -46,13 +46,13 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, "/api/v1/libros/*").hasRole("ADMIN")
                         // Prestamos
                         .requestMatchers(HttpMethod.POST, "/api/v1/prestamos")
-                        .hasAnyRole("BIBLIOTECARIO", "ADMIN")
+                                .hasAnyRole("BIBLIOTECARIO", "ADMIN")
                         .requestMatchers(HttpMethod.PATCH, "/api/v1/prestamos/*/devolucion")
-                        .hasAnyRole("BIBLIOTECARIO", "ADMIN")
+                                .hasAnyRole("BIBLIOTECARIO", "ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/v1/prestamos/mis-prestamos")
-                        .hasRole("LECTOR")
+                                .hasRole("LECTOR")
                         .requestMatchers(HttpMethod.GET, "/api/v1/prestamos/atrasados")
-                        .hasAnyRole("BIBLIOTECARIO", "ADMIN")
+                                .hasAnyRole("BIBLIOTECARIO", "ADMIN")
                         .anyRequest().authenticated())
                 // Se instancia aqui (no es @Component) para que Boot no lo registre dos veces
                 .addFilterBefore(new JwtAuthenticationFilter(jwtService), UsernamePasswordAuthenticationFilter.class);

@@ -1,10 +1,10 @@
 package pablocos.gestor_biblioteca.kinal.controller;
 
-import  pablocos.gestor_biblioteca.kinal.dto.AuthResponse;
-import  pablocos.gestor_biblioteca.kinal.dto.LoginRequest;
-import  pablocos.gestor_biblioteca.kinal.dto.RegisterRequest;
-import  pablocos.gestor_biblioteca.kinal.dto.UsuarioResponse;
-import  pablocos.gestor_biblioteca.kinal.service.AuthService;
+import pablocos.gestor_biblioteca.kinal.dto.AuthResponse;
+import pablocos.gestor_biblioteca.kinal.dto.LoginRequest;
+import pablocos.gestor_biblioteca.kinal.dto.RegisterRequest;
+import pablocos.gestor_biblioteca.kinal.dto.UsuarioResponse;
+import pablocos.gestor_biblioteca.kinal.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
