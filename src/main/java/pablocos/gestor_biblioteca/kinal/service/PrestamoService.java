@@ -1,11 +1,19 @@
 package pablocos.gestor_biblioteca.kinal.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
-import pablocos.gestor_biblioteca.kinal.dto.PrestamoRequestDto;
-import pablocos.gestor_biblioteca.kinal.dto.PrestamoResponseDto;
-import pablocos.gestor_biblioteca.kinal.entity.*;
+import pablocos.gestor_biblioteca.kinal.dto.PageResponse;
+import pablocos.gestor_biblioteca.kinal.dto.PrestamoRequest;
+import pablocos.gestor_biblioteca.kinal.dto.PrestamoResponse;
+import pablocos.gestor_biblioteca.kinal.entity.EstadoPrestamo;
+import pablocos.gestor_biblioteca.kinal.entity.EstadoUsuario;
+import pablocos.gestor_biblioteca.kinal.entity.Prestamo;
+import pablocos.gestor_biblioteca.kinal.entity.Rol;
+import pablocos.gestor_biblioteca.kinal.entity.Usuario;
 import pablocos.gestor_biblioteca.kinal.exception.BusinessRuleException;
 import pablocos.gestor_biblioteca.kinal.exception.ResourceNotFoundException;
 import pablocos.gestor_biblioteca.kinal.repository.LibroRepository;
@@ -14,116 +22,152 @@ import pablocos.gestor_biblioteca.kinal.repository.UsuarioRepository;
 
 import java.time.LocalDate;
 import java.util.List;
-import java.util.stream.Collectors;
 
+/**
+ * Orden de bloqueos (igual en prestamo y devolucion para evitar deadlocks):
+ * usuario -> (prestamo) -> libro.
+ * Se usa READ_COMMITTED para que, tras obtener el bloqueo del usuario, las lecturas
+ * vean siempre lo ultimo confirmado por otras transacciones.
+ */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PrestamoService {
 
+    static final int PLAZO_DIAS = 14;
+    static final int LIMITE_PRESTAMOS_ACTIVOS = 3;
+
+    /** Prestamos "sin devolver": ACTIVO y ATRASADO. */
+    private static final List<EstadoPrestamo> SIN_DEVOLVER =
+            List.of(EstadoPrestamo.ACTIVO, EstadoPrestamo.ATRASADO);
+
     private final PrestamoRepository prestamoRepository;
-    private final LibroRepository libroRepository;
     private final UsuarioRepository usuarioRepository;
+    private final LibroRepository libroRepository;
 
-    @Transactional
-    public PrestamoResponseDto crearPrestamo(String userEmail, PrestamoRequestDto requestDto) {
-        Usuario usuario = usuarioRepository.findByEmail(userEmail)
-                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado: " + userEmail));
-
+    /**
+     * noRollbackFor: cuando se aplica la sancion (Regla 4) la solicitud se rechaza con 409,
+     * pero el cambio de estado a SANCIONADO debe quedar guardado. Ninguna escritura de stock
+     * ni de prestamo ocurre antes de las validaciones, asi que no hay estados a medias.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED, noRollbackFor = BusinessRuleException.class)
+    public PrestamoResponse registrar(PrestamoRequest request) {
         LocalDate hoy = LocalDate.now();
+        Long usuarioId = request.usuarioId();
+        Long libroId = request.libroId();
 
-        // 1. Validar vencimientos y aplicar sanción automática
-        List<Prestamo> prestamosActivos = prestamoRepository.findByUsuarioAndEstado(usuario, EstadoPrestamo.ACTIVO);
-        for (Prestamo p : prestamosActivos) {
-            // Nota: Asegúrate de que tu entidad Prestamo tenga el método getFechaDevolucionPrevista() o getFechaDevolucion()
-            if (p.getFechaDevolucionPrevista().isBefore(hoy)) {
-                try {
-                    p.setEstado(EstadoPrestamo.valueOf("VENCIDO"));
-                } catch (IllegalArgumentException e) {
-                    // Si el enum no tiene VENCIDO, lo manejamos de forma segura
-                }
-                prestamoRepository.save(p);
-                usuario.setEstado(EstadoUsuario.SANCIONADO);
-                usuarioRepository.save(usuario);
-            }
+        // 1. Bloqueo del usuario: serializa los prestamos concurrentes de la misma persona
+        Usuario usuario = usuarioRepository.findByIdForUpdate(usuarioId)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado con id " + usuarioId));
+        Rol rol = usuario.getRol();
+        EstadoUsuario estado = usuario.getEstado();
+
+        if (!libroRepository.existsById(libroId)) {
+            throw new ResourceNotFoundException("Libro no encontrado con id " + libroId);
         }
 
-        if (usuario.getEstado() == EstadoUsuario.SANCIONADO) {
-            throw new BusinessRuleException("Usuario sancionado por tener préstamos vencidos.");
+        // 2. Regla 4: sancionado, o con prestamos vencidos sin devolver -> pasa a SANCIONADO y se rechaza
+        if (estado == EstadoUsuario.SANCIONADO) {
+            throw new BusinessRuleException("El usuario está sancionado y no puede realizar nuevos préstamos");
+        }
+        if (prestamoRepository.existsByUsuarioIdAndEstadoInAndFechaDevolucionEsperadaBefore(
+                usuarioId, SIN_DEVOLVER, hoy)) {
+            prestamoRepository.marcarAtrasadosDeUsuario(
+                    usuarioId, hoy, EstadoPrestamo.ACTIVO, EstadoPrestamo.ATRASADO);
+            usuarioRepository.actualizarEstado(usuarioId, EstadoUsuario.SANCIONADO);
+            throw new BusinessRuleException(
+                    "El usuario pasó a estado SANCIONADO por tener préstamos vencidos sin devolver");
         }
 
-        // 2. Validar límite máximo de 3 préstamos activos
-        long activosCount = prestamosActivos.stream().filter(p -> p.getEstado() == EstadoPrestamo.ACTIVO).count();
-        if (activosCount >= 3) {
-            throw new BusinessRuleException("Límite máximo de 3 préstamos activos alcanzado.");
+        // 3. Regla 2: maximo 3 prestamos activos para un LECTOR
+        if (rol == Rol.LECTOR
+                && prestamoRepository.countByUsuarioIdAndEstadoIn(usuarioId, SIN_DEVOLVER)
+                >= LIMITE_PRESTAMOS_ACTIVOS) {
+            throw new BusinessRuleException("El lector ya tiene " + LIMITE_PRESTAMOS_ACTIVOS
+                    + " préstamos activos; debe devolver alguno antes de pedir otro");
         }
 
-        // 3. Bloqueo pesimista para concurrencia sobre el libro
-        Libro libro = libroRepository.findByIdWithLock(requestDto.getLibroId())
-                .orElseThrow(() -> new ResourceNotFoundException("Libro no encontrado con ID: " + requestDto.getLibroId()));
-
-        // 4. Validar stock disponible
-        if (libro.getStockDisponible() <= 0) {
-            throw new BusinessRuleException("No hay stock disponible para este libro.");
+        // 4. Regla 1: decremento atomico del stock (0 filas afectadas = sin stock)
+        if (libroRepository.decrementarStock(libroId) == 0) {
+            throw new BusinessRuleException("No hay stock disponible para este libro");
         }
 
-        // Descontar stock
-        libro.setStockDisponible(libro.getStockDisponible() - 1);
-        libroRepository.save(libro);
-
-        // Crear préstamo (plazo 14 días usando LocalDate)
+        // 5. Regla 3: plazo de 14 dias
         Prestamo prestamo = Prestamo.builder()
-                .usuario(usuario)
-                .libro(libro)
+                .usuario(usuarioRepository.getReferenceById(usuarioId))
+                .libro(libroRepository.getReferenceById(libroId))
                 .fechaPrestamo(hoy)
-                .fechaDevolucionPrevista(hoy.plusDays(14))
+                .fechaDevolucionEsperada(hoy.plusDays(PLAZO_DIAS))
                 .estado(EstadoPrestamo.ACTIVO)
                 .build();
-
-        Prestamo saved = prestamoRepository.save(prestamo);
-        return mapToDto(saved);
+        return toResponse(prestamoRepository.save(prestamo), hoy);
     }
 
-    @Transactional
-    public PrestamoResponseDto registrarDevolucion(Long prestamoId) {
-        Prestamo prestamo = prestamoRepository.findById(prestamoId)
-                .orElseThrow(() -> new ResourceNotFoundException("Préstamo no encontrado con ID: " + prestamoId));
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public PrestamoResponse devolver(Long prestamoId) {
+        LocalDate hoy = LocalDate.now();
 
+        // Primero el usuario (mismo orden que en registrar), luego el prestamo, al final el libro
+        Long usuarioId = prestamoRepository.findUsuarioIdById(prestamoId)
+                .orElseThrow(() -> noEncontrado(prestamoId));
+        Usuario usuario = usuarioRepository.findByIdForUpdate(usuarioId)
+                .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado con id " + usuarioId));
+        boolean estabaSancionado = usuario.getEstado() == EstadoUsuario.SANCIONADO;
+
+        Prestamo prestamo = prestamoRepository.findByIdForUpdate(prestamoId)
+                .orElseThrow(() -> noEncontrado(prestamoId));
         if (prestamo.getEstado() == EstadoPrestamo.DEVUELTO) {
-            throw new BusinessRuleException("El préstamo ya fue devuelto previamente.");
+            throw new BusinessRuleException("El préstamo ya fue devuelto");
         }
 
+        Long libroId = prestamo.getLibro().getId();
+        prestamo.setFechaDevolucionReal(hoy);
         prestamo.setEstado(EstadoPrestamo.DEVUELTO);
-        prestamo.setFechaDevolucionReal(LocalDate.now());
-        prestamoRepository.save(prestamo);
+        PrestamoResponse respuesta = toResponse(prestamo, hoy);
 
-        // Devolver stock
-        Libro libro = prestamo.getLibro();
-        libro.setStockDisponible(libro.getStockDisponible() + 1);
-        libroRepository.save(libro);
+        // Incremento atomico del stock (hace flush del prestamo antes de ejecutarse)
+        if (libroRepository.incrementarStock(libroId) == 0) {
+            log.warn("No se pudo incrementar el stock del libro {} al devolver el prestamo {} "
+                    + "(stockDisponible ya igualaba stockTotal)", libroId, prestamoId);
+        }
 
-        return mapToDto(prestamo);
+        // Si estaba sancionado y ya no tiene vencidos sin devolver, vuelve a ACTIVO
+        if (estabaSancionado
+                && !prestamoRepository.existsByUsuarioIdAndEstadoInAndFechaDevolucionEsperadaBefore(
+                usuarioId, SIN_DEVOLVER, hoy)) {
+            usuarioRepository.actualizarEstado(usuarioId, EstadoUsuario.ACTIVO);
+        }
+        return respuesta;
     }
 
     @Transactional(readOnly = true)
-    public List<PrestamoResponseDto> obtenerPrestamos(String userEmail, String role) {
-        if ("ADMIN".equals(role) || "BIBLIOTECARIO".equals(role)) {
-            return prestamoRepository.findAll().stream().map(this::mapToDto).collect(Collectors.toList());
-        } else {
-            Usuario usuario = usuarioRepository.findByEmail(userEmail)
-                    .orElseThrow(() -> new ResourceNotFoundException("Usuario no encontrado"));
-            return prestamoRepository.findByUsuario(usuario).stream().map(this::mapToDto).collect(Collectors.toList());
-        }
+    public PageResponse<PrestamoResponse> misPrestamos(Long usuarioId, Pageable pageable) {
+        LocalDate hoy = LocalDate.now();
+        return PageResponse.from(
+                prestamoRepository.findByUsuarioId(usuarioId, pageable).map(p -> toResponse(p, hoy)));
     }
 
-    private PrestamoResponseDto mapToDto(Prestamo p) {
-        return PrestamoResponseDto.builder()
-                .id(p.getId())
-                .usuarioId(p.getUsuario().getId())
-                .libroId(p.getLibro().getId())
-                .fechaPrestamo(p.getFechaPrestamo() != null ? p.getFechaPrestamo().atStartOfDay() : null)
-                .fechaDevolucionPrevista(p.getFechaDevolucionPrevista() != null ? p.getFechaDevolucionPrevista().atStartOfDay() : null)
-                .fechaDevolucionReal(p.getFechaDevolucionReal() != null ? p.getFechaDevolucionReal().atStartOfDay() : null)
-                .estado(p.getEstado() != null ? p.getEstado().name() : null)
-                .build();
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public PageResponse<PrestamoResponse> atrasados(Pageable pageable) {
+        LocalDate hoy = LocalDate.now();
+        // Persiste el estado ATRASADO de los vencidos que seguian como ACTIVO y los lista
+        prestamoRepository.marcarAtrasados(hoy, EstadoPrestamo.ACTIVO, EstadoPrestamo.ATRASADO);
+        return PageResponse.from(
+                prestamoRepository.findByEstadoInAndFechaDevolucionEsperadaBefore(
+                        List.of(EstadoPrestamo.ATRASADO), hoy, pageable).map(p -> toResponse(p, hoy)));
+    }
+
+    /** El estado mostrado es ATRASADO si esta ACTIVO pero ya vencio, aunque aun no se haya persistido. */
+    private PrestamoResponse toResponse(Prestamo p, LocalDate hoy) {
+        EstadoPrestamo estado = p.getEstado();
+        if (estado == EstadoPrestamo.ACTIVO && p.getFechaDevolucionEsperada().isBefore(hoy)) {
+            estado = EstadoPrestamo.ATRASADO;
+        }
+        return new PrestamoResponse(p.getId(), p.getUsuario().getId(), p.getLibro().getId(),
+                p.getFechaPrestamo(), p.getFechaDevolucionEsperada(), p.getFechaDevolucionReal(), estado);
+    }
+
+    private ResourceNotFoundException noEncontrado(Long id) {
+        return new ResourceNotFoundException("Préstamo no encontrado con id " + id);
     }
 }

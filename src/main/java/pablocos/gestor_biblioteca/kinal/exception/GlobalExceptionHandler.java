@@ -2,9 +2,11 @@ package pablocos.gestor_biblioteca.kinal.exception;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -32,6 +34,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return build(HttpStatus.NOT_FOUND, ex.getMessage(), request);
     }
 
+    @ExceptionHandler(InvalidRequestException.class)
+    public ResponseEntity<Object> handleInvalidRequest(InvalidRequestException ex, WebRequest request) {
+        return build(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+    }
+
     @ExceptionHandler(BusinessRuleException.class)
     public ResponseEntity<Object> handleBusinessRule(BusinessRuleException ex, WebRequest request) {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request);
@@ -41,6 +48,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleDataIntegrity(DataIntegrityViolationException ex, WebRequest request) {
         log.warn("Violacion de integridad de datos: {}", ex.getMostSpecificCause().getMessage());
         return build(HttpStatus.CONFLICT, "La operación viola una restricción de datos (valor duplicado o relación existente)", request);
+    }
+
+    /** Deadlock o timeout de bloqueo bajo alta concurrencia: el cliente puede reintentar. */
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    public ResponseEntity<Object> handleLockFailure(PessimisticLockingFailureException ex, WebRequest request) {
+        log.warn("Conflicto de concurrencia: {}", ex.getMostSpecificCause().getMessage());
+        return build(HttpStatus.CONFLICT, "Conflicto de concurrencia; reintente la operación", request);
     }
 
     @ExceptionHandler(BadCredentialsException.class)
@@ -70,6 +84,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, detalle.isEmpty() ? "Datos de entrada inválidos" : detalle, request);
     }
 
+    /** JSON mal formado, con tipos incorrectos o con codificacion invalida. El detalle tecnico solo va al log. */
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
+                                                                  HttpHeaders headers,
+                                                                  HttpStatusCode status,
+                                                                  WebRequest request) {
+        log.warn("Cuerpo de solicitud ilegible en {}: {}", path(request), ex.getMostSpecificCause().getMessage());
+        return build(HttpStatus.BAD_REQUEST,
+                "El cuerpo de la solicitud no es un JSON válido o tiene tipos de datos incorrectos", request);
+    }
+
     /** Punto comun de las demas excepciones estandar de Spring MVC. */
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
@@ -78,6 +103,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                                                              WebRequest request) {
         HttpStatus status = HttpStatus.resolve(statusCode.value());
         String mensaje = status != null ? status.getReasonPhrase() : "Error";
+        log.warn("{} en {}: {}", ex.getClass().getSimpleName(), path(request), ex.getMessage());
         return build(statusCode, mensaje, request);
     }
 

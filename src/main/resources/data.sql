@@ -1,9 +1,8 @@
--- Usuarios iniciales (contrasenas con BCrypt).
--- admin@biblioteca.edu         -> Admin123!
--- bibliotecario@biblioteca.edu -> Biblio123!
+-- admin@biblioteca.com         -> Admin123*
+-- bibliotecario@biblioteca.com -> Biblio123*
 INSERT INTO usuario (nombre, email, password, estado, rol) VALUES
-    ('Administrador', 'admin@biblioteca.edu',
-     '$2b$10$uM1D8/1N1YiJMn3ga2lAGuKREzO2yD9tXuRal4EzYE/1OwhHEn9hS', 'ACTIVO', 'ADMIN'),
-    ('Bibliotecario', 'bibliotecario@biblioteca.edu',
-     '$2b$10$g6KhDw1ECgcVb/OHtVcCbODJS7QZ7DmeOZStcV2jtsgTiB8YNm4ci', 'ACTIVO', 'BIBLIOTECARIO')
+    ('Administrador', 'admin@biblioteca.com',
+     '$2b$10$5lm0XR6TG41Md0lOjFpLrOMcv2YvtT4U8Stk65TCFKqm7ILYVLXq2', 'ACTIVO', 'ADMIN'),
+    ('Bibliotecario', 'bibliotecario@biblioteca.com',
+     '$2b$10$IPOVT8sNZ9T1YL21vCnvMuh.OPJeRC5.rgcoP4H4LYlKpX118TC/O', 'ACTIVO', 'BIBLIOTECARIO')
 ON DUPLICATE KEY UPDATE email = email;

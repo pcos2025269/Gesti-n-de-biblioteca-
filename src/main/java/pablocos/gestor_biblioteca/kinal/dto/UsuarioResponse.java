@@ -1,6 +1,5 @@
 package pablocos.gestor_biblioteca.kinal.dto;
 
-
 import pablocos.gestor_biblioteca.kinal.entity.EstadoUsuario;
 import pablocos.gestor_biblioteca.kinal.entity.Rol;
 
